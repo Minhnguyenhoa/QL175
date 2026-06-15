@@ -1,0 +1,40 @@
+# ===== Java / Spring Boot (backend) =====
+backend/target/
+*.class
+*.jar
+*.war
+!**/.mvn/wrapper/maven-wrapper.jar
+
+# ===== Node / React / Vite (frontend) =====
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Python (tools) =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ===== Logs =====
+*.log
+
+# ===== Generated reports / artifacts =====
+test_output.pdf
+test_report.pdf
+database/*.pdf
+database/bao_cao_*.pdf
+
+# ===== IDE / OS =====
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ===== Misc accidental dirs =====
+%TEMP%/
