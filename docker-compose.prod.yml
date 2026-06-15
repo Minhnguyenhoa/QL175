@@ -1,0 +1,105 @@
+# ============================================================================
+# Production compose for the VPS.
+# Backend & frontend run from pre-built images pulled from GHCR (built by CI).
+# The VPS never compiles anything here — it only pulls images and restarts.
+#
+# Deploy with:  docker compose -f docker-compose.prod.yml up -d
+# Seed the DB once (optional): docker compose -f docker-compose.prod.yml --profile seed up db-seed
+# ============================================================================
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ql175-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: project_mgmt
+      TZ: Asia/Ho_Chi_Minh
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - ql175
+
+  backend:
+    image: ghcr.io/minhnguyenhoa/ql175-backend:latest
+    pull_policy: always
+    container_name: ql175-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/project_mgmt?useSSL=false&serverTimezone=Asia/Ho_Chi_Minh&allowPublicKeyRetrieval=true&characterEncoding=UTF-8"
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: "123456"
+      TZ: Asia/Ho_Chi_Minh
+    networks:
+      - ql175
+
+  # Seeds the database from database/full_data.sql.
+  # Behind the "seed" profile so a normal `up -d` NEVER runs it.
+  # Run manually only when you intentionally want to (re)seed.
+  db-seed:
+    image: mysql:8.0
+    container_name: ql175-db-seed
+    profiles: ["seed"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: "no"
+    environment:
+      DB_HOST: mysql
+      DB_USER: root
+      DB_PASSWORD: "123456"
+      DB_NAME: project_mgmt
+    volumes:
+      - ./database/full_data.sql:/seed/full_data.sql:ro
+      - ./database/seed.sh:/seed/seed.sh:ro
+    entrypoint: ["sh", "/seed/seed.sh"]
+    networks:
+      - ql175
+
+  frontend:
+    image: ghcr.io/minhnguyenhoa/ql175-frontend:latest
+    pull_policy: always
+    container_name: ql175-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Bind-mount the active nginx config so we can switch HTTP <-> HTTPS without rebuilding
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot
+    networks:
+      - ql175
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: ql175-certbot
+    restart: unless-stopped
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    # Try to renew twice a day; does nothing until a cert has been issued
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
+    networks:
+      - ql175
+
+volumes:
+  mysql-data:
+
+networks:
+  ql175:
+    driver: bridge
