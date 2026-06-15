@@ -219,7 +219,7 @@ export default function Projects() {
             <Select options={STATUS_OPTIONS.map(s => ({ value: s, label: s }))} />
           </Form.Item>
           <Form.Item name="currentPhase" label="Giai đoạn hiện tại">
-            <Select mode="tags" options={PHASE_OPTIONS.map(p => ({ value: p, label: p }))} />
+            <Select allowClear showSearch options={PHASE_OPTIONS.map(p => ({ value: p, label: p }))} />
           </Form.Item>
           <Form.Item name="hasWorkPlan" label="Đã có kế hoạch công việc?">
             <Select options={[{ value: true, label: 'Yes' }, { value: false, label: 'No' }]} />
