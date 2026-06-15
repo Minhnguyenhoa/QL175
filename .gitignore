@@ -36,5 +36,9 @@ database/bao_cao_*.pdf
 .DS_Store
 Thumbs.db
 
+# ===== Certbot live state (certs, private keys, runtime renewal info) =====
+# Machine-local; generated on the VPS. Never commit (keeps private keys out of git).
+certbot/conf/
+
 # ===== Misc accidental dirs =====
 %TEMP%/
