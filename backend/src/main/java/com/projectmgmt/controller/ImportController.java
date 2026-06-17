@@ -3,6 +3,7 @@ package com.projectmgmt.controller;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -27,6 +28,10 @@ public class ImportController {
     private static final Logger log = LoggerFactory.getLogger(ImportController.class);
 
     private final JdbcTemplate jdbc;
+
+    /** Lệnh python trong container (override bằng env IMPORT_PYTHON_BIN nếu cần). */
+    @Value("${import.python-bin:python3}")
+    private String pythonBin;
 
     /**
      * GET /api/import/template
@@ -71,24 +76,44 @@ public class ImportController {
 
         // 1. Lưu file vào temp directory
         Path tempDir = Files.createTempDirectory("qt175_import_");
-        Path excelPath = tempDir.resolve(originalName);
-        Path sqlPath   = tempDir.resolve("import_data.sql");
+        Path excelPath  = tempDir.resolve(originalName);
+        Path sqlPath    = tempDir.resolve("import_data.sql");
+        Path scriptPath = tempDir.resolve("extract_excel.py");
 
         try {
             file.transferTo(excelPath.toFile());
             log.info("Saved uploaded Excel to: {}", excelPath);
 
-            // 2. Chạy Python extract script
-            String pythonScript = "D:/QT_175/extract_excel.py";
+            // 2. Giải nén script từ classpath (đóng gói trong jar) ra file tạm
+            Resource scriptRes = new ClassPathResource("scripts/extract_excel.py");
+            if (!scriptRes.exists()) {
+                result.put("success", false);
+                result.put("message", "Không tìm thấy script extract_excel.py trong ứng dụng");
+                return result;
+            }
+            try (InputStream in = scriptRes.getInputStream()) {
+                Files.copy(in, scriptPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            // 3. Chạy Python extract script
             ProcessBuilder pb = new ProcessBuilder(
-                "python", pythonScript,
+                pythonBin, scriptPath.toString(),
                 "--xlsx", excelPath.toString(),
                 "--out",  sqlPath.toString()
             );
             pb.redirectErrorStream(true);
             pb.environment().put("PYTHONIOENCODING", "utf-8");
 
-            Process process = pb.start();
+            Process process;
+            try {
+                process = pb.start();
+            } catch (IOException e) {
+                log.error("Không khởi chạy được Python ('{}'): {}", pythonBin, e.getMessage());
+                result.put("success", false);
+                result.put("message", "Máy chủ chưa cài đặt Python để xử lý Excel");
+                result.put("detail", e.getMessage());
+                return result;
+            }
             String pyOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             boolean finished = process.waitFor(120, TimeUnit.SECONDS);
 
@@ -105,7 +130,7 @@ public class ImportController {
             String milestonesStr = extractStat(pyOutput, "Milestones: (\\d+)");
             String tasksStr      = extractStat(pyOutput, "Tasks: (\\d+)");
 
-            // 3. Đọc SQL và thực thi từng statement
+            // 4. Đọc SQL và thực thi từng statement
             String sqlContent = Files.readString(sqlPath, StandardCharsets.UTF_8);
             int stmtCount = executeSqlFile(sqlContent);
 
@@ -122,6 +147,7 @@ public class ImportController {
             try {
                 Files.deleteIfExists(excelPath);
                 Files.deleteIfExists(sqlPath);
+                Files.deleteIfExists(scriptPath);
                 Files.deleteIfExists(tempDir);
             } catch (Exception e) {
                 log.warn("Cleanup temp files failed: {}", e.getMessage());

@@ -7,7 +7,7 @@ import {
   InboxOutlined, FileExcelOutlined, CheckCircleOutlined,
   LoadingOutlined, WarningOutlined, DownloadOutlined
 } from '@ant-design/icons'
-import api from '../services/api'
+import { getToken, clearAuth } from '../auth'
 
 const { Dragger } = Upload
 const { Text, Title } = Typography
@@ -40,19 +40,27 @@ export default function ImportExcelModal({ open, onClose, onSuccess }) {
     formData.append('file', fileList[0])
 
     try {
-      // Gọi thẳng axios để dùng FormData (không qua api interceptor default)
-      const token = localStorage.getItem('qt175_token')
+      // Dùng fetch trực tiếp để gửi FormData (không qua api interceptor default)
+      const token = getToken()
       const res = await fetch('/api/import/excel', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       })
-      const data = await res.json()
-      if (data.success) {
+
+      // Phiên hết hạn -> đăng xuất & về trang login (giống interceptor của axios)
+      if (res.status === 401) {
+        clearAuth()
+        window.location.href = '/login'
+        return
+      }
+
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.success) {
         setResult(data)
         onSuccess?.()
       } else {
-        setError(data.message || 'Import thất bại')
+        setError(data.message || `Import thất bại (HTTP ${res.status})`)
       }
     } catch (e) {
       setError(e.message || 'Lỗi kết nối')
@@ -70,10 +78,15 @@ export default function ImportExcelModal({ open, onClose, onSuccess }) {
 
   const handleDownloadTemplate = async () => {
     try {
-      const token = localStorage.getItem('qt175_token')
+      const token = getToken()
       const res = await fetch('/api/import/template', {
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (res.status === 401) {
+        clearAuth()
+        window.location.href = '/login'
+        return
+      }
       if (!res.ok) { message.error('Tải template thất bại'); return }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)

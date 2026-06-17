@@ -3,17 +3,23 @@ package com.projectmgmt.controller;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/report")
@@ -22,6 +28,25 @@ public class ReportController {
 
     private static final Logger log = LoggerFactory.getLogger(ReportController.class);
     private final JdbcTemplate jdbc;
+
+    /** Lệnh python trong container (override bằng env IMPORT_PYTHON_BIN nếu cần). */
+    @Value("${import.python-bin:python3}")
+    private String pythonBin;
+
+    @Value("${spring.datasource.url}")
+    private String datasourceUrl;
+    @Value("${spring.datasource.username}")
+    private String dbUser;
+    @Value("${spring.datasource.password}")
+    private String dbPwd;
+
+    /** Các script cần giải nén cùng thư mục (generate_* import report_data). */
+    private static final String[] REPORT_SCRIPTS = {
+        "report_data.py", "generate_report_pdf.py", "generate_report_slides.py"
+    };
+
+    private static final Pattern JDBC_URL =
+        Pattern.compile("jdbc:mysql://([^:/]+)(?::(\\d+))?/([^?;]+)");
 
     /** GET /api/report/project-groups — trả về danh sách nhóm dự án để chọn khi xuất PDF */
     @GetMapping("/project-groups")
@@ -144,48 +169,8 @@ public class ReportController {
         // Filename prefix: dùng cho tên file tải về
         String projLabel = projectCode.equals("ALL") ? "TatCa" : projectCode.replace(",", "-");
 
-        // Tạo temp file cho PDF output
-        Path pdfPath = Files.createTempFile("qt175_report_", ".pdf");
-
-        try {
-            List<String> cmd = new java.util.ArrayList<>(java.util.Arrays.asList(
-                "python",
-                "D:/QT_175/generate_report_pdf.py",
-                "--out",  pdfPath.toString(),
-                "--date", reportDate,
-                "--project", projectCode
-            ));
-            ProcessBuilder pb = new ProcessBuilder(cmd);
-            pb.redirectErrorStream(true);
-            pb.environment().put("PYTHONIOENCODING", "utf-8");
-
-            Process process = pb.start();
-            String pyOutput = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            boolean finished = process.waitFor(120, TimeUnit.SECONDS);
-
-            if (!finished || process.exitValue() != 0) {
-                log.error("PDF generation failed: {}", pyOutput);
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(null);
-            }
-
-            log.info("PDF generated: {}", pyOutput.trim());
-
-            byte[] pdfBytes = Files.readAllBytes(pdfPath);
-            String filename = "BaoCaoTienDo_" + projLabel + "_" + reportDate.replace("/", "-") + ".pdf";
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_PDF);
-            headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());
-            headers.setContentLength(pdfBytes.length);
-
-            return ResponseEntity.ok()
-                .headers(headers)
-                .body(new InputStreamResource(new ByteArrayInputStream(pdfBytes)));
-
-        } finally {
-            try { Files.deleteIfExists(pdfPath); } catch (Exception ignored) {}
-        }
+        return runReportScript("generate_report_pdf.py", "BaoCaoTienDo_" + projLabel,
+                reportDate, projectCode);
     }
 
     /**
@@ -203,31 +188,63 @@ public class ReportController {
         String projectCode = (projectParam != null && !projectParam.isBlank()) ? projectParam : "ALL";
         String projLabel = projectCode.equals("ALL") ? "TatCa" : projectCode.replace(",", "-");
 
-        Path pdfPath = Files.createTempFile("qt175_slides_", ".pdf");
+        return runReportScript("generate_report_slides.py", "BaoCaoSlide_" + projLabel,
+                reportDate, projectCode);
+    }
+
+    /**
+     * Giải nén các script báo cáo từ classpath ra thư mục tạm, chạy script được chỉ định
+     * với tham số kết nối DB lấy từ cấu hình Spring, rồi stream PDF kết quả về client.
+     */
+    private ResponseEntity<InputStreamResource> runReportScript(
+            String scriptName, String filePrefix, String reportDate, String projectCode) throws Exception {
+
+        Path tempDir = Files.createTempDirectory("qt175_report_");
+        Path pdfPath = tempDir.resolve("report.pdf");
         try {
-            List<String> cmd = new java.util.ArrayList<>(java.util.Arrays.asList(
-                "python",
-                "D:/QT_175/generate_report_slides.py",
-                "--out",  pdfPath.toString(),
-                "--date", reportDate,
+            // 1. Giải nén report_data.py + generate_*.py vào cùng thư mục
+            for (String s : REPORT_SCRIPTS) {
+                Resource res = new ClassPathResource("scripts/" + s);
+                if (!res.exists()) {
+                    log.error("Thiếu script báo cáo trong ứng dụng: {}", s);
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+                }
+                try (InputStream in = res.getInputStream()) {
+                    Files.copy(in, tempDir.resolve(s), StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+
+            // 2. Dựng lệnh: python <script> --out ... --date ... --project ... + tham số DB
+            List<String> cmd = new ArrayList<>(Arrays.asList(
+                pythonBin, tempDir.resolve(scriptName).toString(),
+                "--out",     pdfPath.toString(),
+                "--date",    reportDate,
                 "--project", projectCode
             ));
+            cmd.addAll(buildDbArgs());
+
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             pb.environment().put("PYTHONIOENCODING", "utf-8");
 
-            Process process = pb.start();
-            String pyOutput = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            Process process;
+            try {
+                process = pb.start();
+            } catch (IOException e) {
+                log.error("Không khởi chạy được Python ('{}'): {}", pythonBin, e.getMessage());
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+            }
+            String pyOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             boolean finished = process.waitFor(120, TimeUnit.SECONDS);
 
             if (!finished || process.exitValue() != 0) {
-                log.error("Slide PDF generation failed: {}", pyOutput);
+                log.error("Report generation failed ({}): {}", scriptName, pyOutput);
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
             }
-            log.info("Slide PDF generated: {}", pyOutput.trim());
+            log.info("Report generated ({}): {}", scriptName, pyOutput.trim());
 
             byte[] pdfBytes = Files.readAllBytes(pdfPath);
-            String filename = "BaoCaoSlide_" + projLabel + "_" + reportDate.replace("/", "-") + ".pdf";
+            String filename = filePrefix + "_" + reportDate.replace("/", "-") + ".pdf";
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_PDF);
@@ -236,7 +253,29 @@ public class ReportController {
             return ResponseEntity.ok().headers(headers)
                 .body(new InputStreamResource(new ByteArrayInputStream(pdfBytes)));
         } finally {
-            try { Files.deleteIfExists(pdfPath); } catch (Exception ignored) {}
+            // Dọn dẹp toàn bộ thư mục tạm
+            try (var paths = Files.walk(tempDir)) {
+                paths.sorted(Comparator.reverseOrder())
+                     .forEach(p -> { try { Files.deleteIfExists(p); } catch (Exception ignored) {} });
+            } catch (Exception ignored) {}
         }
+    }
+
+    /** Lấy --host/--port/--db/--user/--pwd cho script Python từ cấu hình datasource. */
+    private List<String> buildDbArgs() {
+        String host = "mysql", port = "3306", db = "project_mgmt";
+        Matcher m = JDBC_URL.matcher(datasourceUrl == null ? "" : datasourceUrl);
+        if (m.find()) {
+            host = m.group(1);
+            if (m.group(2) != null) port = m.group(2);
+            db = m.group(3);
+        }
+        return new ArrayList<>(Arrays.asList(
+            "--host", host,
+            "--port", port,
+            "--db",   db,
+            "--user", dbUser == null ? "root" : dbUser,
+            "--pwd",  dbPwd  == null ? "" : dbPwd
+        ));
     }
 }

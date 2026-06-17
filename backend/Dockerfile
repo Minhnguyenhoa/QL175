@@ -9,6 +9,18 @@ RUN mvn -q -B clean package -DskipTests
 # ===== Stage 2: Runtime =====
 FROM eclipse-temurin:17-jre
 WORKDIR /app
+# Python + thư viện cho các script:
+#  - openpyxl: trích xuất Excel (POST /api/import/excel)
+#  - reportlab + mysql.connector: sinh báo cáo PDF/Slide (/api/report/export-*)
+#  - fonts-dejavu: font Unicode (tiếng Việt) cho reportlab
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 \
+         python3-openpyxl \
+         python3-reportlab \
+         python3-mysql.connector \
+         fonts-dejavu \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/target/*.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
