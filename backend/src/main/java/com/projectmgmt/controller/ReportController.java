@@ -105,14 +105,14 @@ public class ReportController {
 
         // ── 4. MILESTONE THÀNH PHẦN (top components with counts) ──────────────
         List<Map<String, Object>> components = jdbc.queryForList(
-            "SELECT p.code AS productCode, m.component_milestone, " +
+            "SELECT p.code AS productCode, m.phase, m.component_milestone, " +
             "COUNT(m.id) AS total, " +
             "SUM(CASE WHEN m.actual_end_date IS NOT NULL THEN 1 ELSE 0 END) AS done, " +
             "SUM(CASE WHEN m.current_phase IS NOT NULL AND m.actual_end_date IS NULL THEN 1 ELSE 0 END) AS inProgress " +
             "FROM milestones m JOIN products p ON m.product_id = p.id " +
-            "WHERE m.component_milestone IS NOT NULL AND m.phase = 'Giai đoạn 1' " +
-            "GROUP BY p.code, m.component_milestone " +
-            "ORDER BY p.code, m.component_milestone");
+            "WHERE m.component_milestone IS NOT NULL " +
+            "GROUP BY p.code, m.phase, m.component_milestone " +
+            "ORDER BY p.code, m.phase, m.component_milestone");
         result.put("milestoneComponents", components);
 
         // ── 5. NHÂN SỰ ────────────────────────────────────────────────────────

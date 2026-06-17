@@ -6,15 +6,6 @@ import ImportExcelModal from '../components/ImportExcelModal'
 
 const { Title, Text } = Typography
 
-const PRODUCT_LABELS = {
-  HIS: '🏥 HIS - Quản lý bệnh viện',
-  LIS: '⚗ LIS - Quản lý xét nghiệm',
-  EMR: '📋 EMR - Bệnh án điện tử',
-  KSK: '🩺 KSK - Sức khỏe CBCS',
-  QLTTDL: '🖥 QLTTDL - Trung tâm DL',
-  THDB: '🔗 THDB - Tích hợp đồng bộ',
-}
-
 const STATUS_COLOR = { Warning: 'orange', 'On Track': 'green', Overdue: 'red', Normal: 'blue' }
 
 export default function ReportPage() {
@@ -117,11 +108,30 @@ export default function ReportPage() {
   const completionPct = overview.total > 0
     ? Math.round((overview.done / overview.total) * 100 * 100) / 100 : 0
 
+  // Tiêu đề cover: hiển thị theo (các) dự án đang chọn ở dropdown
+  const headerLabel = (() => {
+    if (!selectedProject || selectedProject.length === 0) return 'TẤT CẢ DỰ ÁN'
+    const sel = projectGroups.filter(g => selectedProject.includes(g.code))
+    if (sel.length === 1) {
+      const g = sel[0]
+      return g.name ? `${g.code} — ${g.name}` : g.code
+    }
+    return sel.map(g => g.code).join(', ')
+  })()
+
+  // Nhãn giai đoạn: lấy theo các giai đoạn thực có trong dữ liệu (byPhase)
+  const phaseLabel = (byPhase || [])
+    .map(p => p.phase)
+    .filter(Boolean)
+    .join(', ')
+
   // Columns for milestone components table
   const componentCols = [
     { title: '#', key: 'idx', render: (_, __, i) => i + 1, width: 40 },
     { title: 'Hệ thống', dataIndex: 'productCode', key: 'code', width: 80,
       render: v => <Tag color="blue">{v}</Tag> },
+    { title: 'Giai đoạn', dataIndex: 'phase', key: 'phase', width: 110,
+      render: v => v ? <Tag>{v}</Tag> : '—' },
     { title: 'Milestone thành phần', dataIndex: 'component_milestone', key: 'comp',
       ellipsis: true },
     { title: 'Tổng', dataIndex: 'total', key: 'total', width: 60, align: 'center' },
@@ -246,9 +256,9 @@ export default function ReportPage() {
         <Card style={{ marginBottom: 24, background: 'linear-gradient(135deg,#003a8c 0%,#1677ff 100%)', color: '#fff', borderRadius: 12 }}>
           <Row gutter={24} align="middle">
             <Col span={14}>
-              <Text style={{ color: '#91caff', fontSize: 13, letterSpacing: 2 }}>H05YTS — HỆ THỐNG CNTT Y TẾ</Text>
+              <Text style={{ color: '#91caff', fontSize: 13, letterSpacing: 2 }}>{headerLabel}</Text>
               <Title level={2} style={{ color: '#fff', margin: '8px 0' }}>BÁO CÁO TIẾN ĐỘ DỰ ÁN</Title>
-              <Text style={{ color: '#bae0ff', fontSize: 13 }}>{reportDate} · Giai đoạn 1</Text>
+              <Text style={{ color: '#bae0ff', fontSize: 13 }}>{phaseLabel ? `${reportDate} · ${phaseLabel}` : reportDate}</Text>
             </Col>
             <Col span={10}>
               <Row gutter={16}>
@@ -351,7 +361,7 @@ export default function ReportPage() {
 
         {/* ══ SECTION 3: MILESTONE THÀNH PHẦN GĐ1 ══════════════════════════ */}
         <Title level={4} style={{ borderLeft: '4px solid #1677ff', paddingLeft: 12, marginBottom: 16 }}>
-          3 · Chi tiết Milestone thành phần — Giai đoạn 1
+          3 · Chi tiết Milestone thành phần
         </Title>
         <Table
           dataSource={milestoneComponents || []}
