@@ -1,10 +1,12 @@
 # ===== Stage 1: Build =====
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /build
+# settings.xml định tuyến Maven Central qua mirror Google (tránh 403 từ repo.maven.apache.org)
+COPY settings.xml /root/.m2/settings.xml
 COPY pom.xml .
-RUN mvn -q -B dependency:go-offline
+RUN mvn -q -B -Dmaven.wagon.http.retryHandler.count=3 dependency:go-offline
 COPY src ./src
-RUN mvn -q -B clean package -DskipTests
+RUN mvn -q -B -Dmaven.wagon.http.retryHandler.count=3 clean package -DskipTests
 
 # ===== Stage 2: Runtime =====
 FROM eclipse-temurin:17-jre
