@@ -3,9 +3,11 @@ package com.projectmgmt.service;
 import com.projectmgmt.dto.ResourceSummaryDTO;
 import com.projectmgmt.entity.Employee;
 import com.projectmgmt.entity.MonthlyAllocation;
+import com.projectmgmt.entity.Product;
 import com.projectmgmt.entity.ResourceAllocation;
 import com.projectmgmt.repository.EmployeeRepository;
 import com.projectmgmt.repository.ResourceAllocationRepository;
+import com.projectmgmt.util.LazyRefs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,8 +64,9 @@ public class ResourceSummaryService {
 
             // list of projects
             List<String> projects = empAllocations.stream()
-                    .filter(ra -> ra.getProduct() != null)
-                    .map(ra -> ra.getProduct().getCode())
+                    .map(ra -> LazyRefs.load(ra.getProduct()))
+                    .filter(p -> p != null)
+                    .map(Product::getCode)
                     .distinct().sorted().collect(Collectors.toList());
 
             return ResourceSummaryDTO.builder()

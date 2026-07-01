@@ -9,14 +9,17 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.sql.DataSource;
 import java.io.*;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -27,7 +30,7 @@ public class ImportController {
 
     private static final Logger log = LoggerFactory.getLogger(ImportController.class);
 
-    private final JdbcTemplate jdbc;
+    private final DataSource dataSource;
 
     /** Lệnh python trong container (override bằng env IMPORT_PYTHON_BIN nếu cần). */
     @Value("${import.python-bin:python3}")
@@ -117,7 +120,15 @@ public class ImportController {
             String pyOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             boolean finished = process.waitFor(120, TimeUnit.SECONDS);
 
-            if (!finished || process.exitValue() != 0) {
+            if (!finished) {
+                // Đừng để tiến trình python treo ngốn tài nguyên
+                process.destroyForcibly();
+                result.put("success", false);
+                result.put("message", "Xử lý Excel quá thời gian (timeout)");
+                result.put("detail", pyOutput);
+                return result;
+            }
+            if (process.exitValue() != 0) {
                 result.put("success", false);
                 result.put("message", "Python script thất bại");
                 result.put("detail", pyOutput);
@@ -158,26 +169,55 @@ public class ImportController {
     }
 
     /**
-     * Thực thi file SQL (nhiều statements, phân tách bằng ';')
+     * Thực thi file SQL (nhiều statements, phân tách bằng ';').
+     *
+     * QUAN TRỌNG: chạy TẤT CẢ statement trên MỘT connection duy nhất trong MỘT
+     * transaction. File SQL tự chứa `SET FOREIGN_KEY_CHECKS=0` ở đầu và `=1` ở cuối;
+     * vì cùng một connection nên việc tắt FK có hiệu lực cho toàn bộ DELETE/INSERT.
+     *
+     * Trước đây mỗi câu chạy qua một connection khác nhau của pool (HikariCP), nên
+     * `SET FOREIGN_KEY_CHECKS=0` không áp dụng cho các câu DELETE/INSERT ở connection
+     * khác → khi import lần 2 (bảng đã có dữ liệu) sinh ra tham chiếu khoá ngoại lệch
+     * (product trỏ tới project_group không tồn tại) làm API sản phẩm sập 500.
+     *
+     * Lỗi cấp connection -> rollback toàn bộ (giữ nguyên dữ liệu cũ thay vì làm hỏng).
+     * Lỗi ở một câu lẻ (dữ liệu bẩn) -> bỏ qua câu đó và tiếp tục (InnoDB chỉ rollback
+     * đúng câu lỗi, không huỷ cả transaction).
      */
-    private int executeSqlFile(String sqlContent) {
-        // Tách các statement
+    private int executeSqlFile(String sqlContent) throws SQLException {
         String[] rawStatements = sqlContent.split("(?<=;)\\s*\\n");
         int count = 0;
-        for (String stmt : rawStatements) {
-            String s = stmt.trim();
-            if (s.isEmpty() || s.startsWith("--")) continue;
-            // Bỏ comment cuối dòng
-            if (s.endsWith(";")) {
-                s = s.substring(0, s.length() - 1).trim();
-            }
-            if (s.isEmpty() || s.startsWith("--")) continue;
-            try {
-                jdbc.execute(s);
-                count++;
-            } catch (Exception e) {
-                log.warn("SQL error (skipped): {} | stmt: {}",
-                    e.getMessage(), s.length() > 80 ? s.substring(0, 80) + "..." : s);
+        try (Connection conn = dataSource.getConnection()) {
+            boolean prevAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (Statement st = conn.createStatement()) {
+                for (String stmt : rawStatements) {
+                    String s = stmt.trim();
+                    if (s.isEmpty() || s.startsWith("--")) continue;
+                    // Bỏ dấu ';' cuối
+                    if (s.endsWith(";")) {
+                        s = s.substring(0, s.length() - 1).trim();
+                    }
+                    if (s.isEmpty() || s.startsWith("--")) continue;
+                    try {
+                        st.execute(s);
+                        count++;
+                    } catch (SQLException e) {
+                        log.warn("SQL error (skipped): {} | stmt: {}",
+                            e.getMessage(), s.length() > 80 ? s.substring(0, 80) + "..." : s);
+                    }
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                log.error("Import thất bại ở tầng transaction, đã rollback: {}", e.getMessage());
+                throw e;
+            } finally {
+                // Đảm bảo FK checks bật lại và trả connection về pool ở trạng thái sạch
+                try (Statement reset = conn.createStatement()) {
+                    reset.execute("SET FOREIGN_KEY_CHECKS=1");
+                } catch (SQLException ignore) { /* best effort */ }
+                conn.setAutoCommit(prevAutoCommit);
             }
         }
         return count;

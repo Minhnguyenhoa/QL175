@@ -6,6 +6,7 @@ import com.projectmgmt.entity.Customer;
 import com.projectmgmt.entity.ProjectGroup;
 import com.projectmgmt.repository.CustomerRepository;
 import com.projectmgmt.repository.ProjectGroupRepository;
+import com.projectmgmt.util.LazyRefs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,9 +57,10 @@ public class ProjectGroupService {
                 .name(pg.getName())
                 .director(pg.getDirector())
                 .build();
-        if (pg.getCustomer() != null) {
-            dto.setCustomerId(pg.getCustomer().getId());
-            dto.setCustomerName(pg.getCustomer().getInvestorName());
+        var customer = LazyRefs.load(pg.getCustomer());
+        if (customer != null) {
+            dto.setCustomerId(customer.getId());
+            dto.setCustomerName(customer.getInvestorName());
         }
         if (pg.getProducts() != null) {
             dto.setProducts(pg.getProducts().stream().map(p -> ProductDTO.builder()

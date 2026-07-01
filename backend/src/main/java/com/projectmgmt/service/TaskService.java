@@ -4,6 +4,7 @@ import com.projectmgmt.dto.TaskDTO;
 import com.projectmgmt.entity.Task;
 import com.projectmgmt.repository.ProductRepository;
 import com.projectmgmt.repository.TaskRepository;
+import com.projectmgmt.util.LazyRefs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,10 +50,11 @@ public class TaskService {
         TaskDTO dto = TaskDTO.builder()
                 .id(t.getId()).phaseGroup(t.getPhaseGroup()).taskNo(t.getTaskNo())
                 .taskName(t.getTaskName()).content(t.getContent()).featureGroup(t.getFeatureGroup()).build();
-        if (t.getProduct() != null) {
-            dto.setProductId(t.getProduct().getId());
-            dto.setProductCode(t.getProduct().getCode());
-            dto.setProductName(t.getProduct().getName());
+        var prod = LazyRefs.load(t.getProduct());
+        if (prod != null) {
+            dto.setProductId(prod.getId());
+            dto.setProductCode(prod.getCode());
+            dto.setProductName(prod.getName());
         }
         return dto;
     }
