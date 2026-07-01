@@ -20,7 +20,15 @@ export default function LoginPage() {
       setAuth(res.data.token, { username: res.data.username, fullName: res.data.fullName })
       navigate('/', { replace: true })
     } catch (e) {
-      setError('Tên đăng nhập hoặc mật khẩu không đúng')
+      const status = e.response?.status
+      if (status === 401 || status === 403) {
+        setError('Tên đăng nhập hoặc mật khẩu không đúng')
+      } else if (status) {
+        // 5xx / lỗi khác từ server -> không phải sai mật khẩu
+        setError(`Máy chủ đang gặp sự cố (HTTP ${status}). Vui lòng thử lại sau.`)
+      } else {
+        setError('Không kết nối được máy chủ. Kiểm tra mạng hoặc thử lại sau.')
+      }
     } finally {
       setLoading(false)
     }

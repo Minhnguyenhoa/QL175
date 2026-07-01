@@ -4,6 +4,7 @@ import com.projectmgmt.dto.ProductDTO;
 import com.projectmgmt.entity.Product;
 import com.projectmgmt.repository.ProductRepository;
 import com.projectmgmt.repository.ProjectGroupRepository;
+import com.projectmgmt.util.LazyRefs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -69,10 +70,11 @@ public class ProductService {
                 .currentPhase(p.getCurrentPhase())
                 .hasWorkPlan(p.getHasWorkPlan())
                 .build();
-        if (p.getProjectGroup() != null) {
-            dto.setProjectGroupId(p.getProjectGroup().getId());
-            dto.setProjectGroupCode(p.getProjectGroup().getCode());
-            dto.setProjectGroupName(p.getProjectGroup().getName());
+        var pg = LazyRefs.load(p.getProjectGroup());
+        if (pg != null) {
+            dto.setProjectGroupId(pg.getId());
+            dto.setProjectGroupCode(pg.getCode());
+            dto.setProjectGroupName(pg.getName());
         }
         return dto;
     }

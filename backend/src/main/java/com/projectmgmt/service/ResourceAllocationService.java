@@ -4,6 +4,7 @@ import com.projectmgmt.dto.MonthlyAllocationDTO;
 import com.projectmgmt.dto.ResourceAllocationDTO;
 import com.projectmgmt.entity.*;
 import com.projectmgmt.repository.*;
+import com.projectmgmt.util.LazyRefs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -92,15 +93,17 @@ public class ResourceAllocationService {
                 .toDate(ra.getToDate())
                 .allocationPercent(ra.getAllocationPercent())
                 .build();
-        if (ra.getProduct() != null) {
-            dto.setProductId(ra.getProduct().getId());
-            dto.setProductCode(ra.getProduct().getCode());
-            dto.setProductName(ra.getProduct().getName());
+        var prod = LazyRefs.load(ra.getProduct());
+        if (prod != null) {
+            dto.setProductId(prod.getId());
+            dto.setProductCode(prod.getCode());
+            dto.setProductName(prod.getName());
         }
-        if (ra.getEmployee() != null) {
-            dto.setEmployeeId(ra.getEmployee().getId());
-            dto.setEmployeeName(ra.getEmployee().getName());
-            dto.setEmployeeCompany(ra.getEmployee().getCompany());
+        var emp = LazyRefs.load(ra.getEmployee());
+        if (emp != null) {
+            dto.setEmployeeId(emp.getId());
+            dto.setEmployeeName(emp.getName());
+            dto.setEmployeeCompany(emp.getCompany());
         }
         if (ra.getMonthlyAllocations() != null) {
             dto.setMonthlyAllocations(ra.getMonthlyAllocations().stream()

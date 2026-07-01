@@ -4,6 +4,7 @@ import com.projectmgmt.dto.MilestoneDTO;
 import com.projectmgmt.entity.Milestone;
 import com.projectmgmt.repository.MilestoneRepository;
 import com.projectmgmt.repository.ProductRepository;
+import com.projectmgmt.util.LazyRefs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -86,13 +87,15 @@ public class MilestoneService {
                 .status(m.getStatus())
                 .remind(m.getRemind())
                 .build();
-        if (m.getProduct() != null) {
-            dto.setProductId(m.getProduct().getId());
-            dto.setProductCode(m.getProduct().getCode());
-            dto.setProductName(m.getProduct().getName());
+        var prod = LazyRefs.load(m.getProduct());
+        if (prod != null) {
+            dto.setProductId(prod.getId());
+            dto.setProductCode(prod.getCode());
+            dto.setProductName(prod.getName());
         }
-        if (m.getParent() != null) {
-            dto.setParentId(m.getParent().getId());
+        var parent = LazyRefs.load(m.getParent());
+        if (parent != null) {
+            dto.setParentId(parent.getId());
         }
         if (m.getChildren() != null && !m.getChildren().isEmpty()) {
             dto.setChildren(m.getChildren().stream().map(this::toDTO).collect(Collectors.toList()));
